@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech-to-Text with Waveform Visualization</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f7f9fc;
+            color: #333;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background-color: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            font-style: italic;
+            color: #7f8c8d;
+            margin-bottom: 15px;
+        }
+        
+        .visualizations {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .waveform-container {
+            width: 100%;
+            background-color: #f0f3f7;
+            border-radius: 6px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        
+        .waveform-img {
+            width: 100%;
+            border-radius: 4px;
+            max-height: 200px;
+        }
+        
+        #transcript-container {
+            background-color: #f0f3f7;
+            padding: 20px;
+            border-radius: 6px;
+            min-height: 200px;
+            overflow-y: auto;
+            line-height: 1.6;
+        }
+        
+        .interim {
+            color: gray;
+            font-style: italic;
+        }
+        
+        .final {
+            color: #2c3e50;
+            font-weight: 500;
+        }
+        
+        .metrics {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+        
+        .metric {
+            background-color: #f0f3f7;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            flex: 1;
+        }
+        
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #3498db;
+            margin-top: 5px;
+        }
+        
+        @media (max-width: 600px) {
+            .metrics {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Speech-to-Text with Waveform Visualization</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <button id="startBtn">Start Recording</button>
+            <button id="stopBtn" disabled>Stop Recording</button>
+            <button id="clearBtn">Clear Transcript</button>
+        </div>
+        
+        <div class="status" id="status">Ready to transcribe...</div>
+        
+        <div class="visualizations">
+            <div class="waveform-container">
+                <img id="waveformImage" class="waveform-img" src="/static/placeholder-waveform.png" alt="Speech waveform visualization">
+            </div>
+            
+            <div id="transcript-container">
+                <span class="final" id="final-transcript"></span>
+                <span class="interim" id="interim-transcript"></span>
+            </div>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric">
+                <div>Words</div>
+                <div class="metric-value" id="word-count">0</div>
+            </div>
+            <div class="metric">
+                <div>Avg. Confidence</div>
+                <div class="metric-value" id="avg-confidence">0%</div>
+            </div>
+            <div class="metric">
+                <div>Duration</div>
+                <div class="metric-value" id="duration">0:00</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Speech recognition setup
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        
+        // DOM elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const statusEl = document.getElementById('status');
+        const finalTranscript = document.getElementById('final-transcript');
+        const interimTranscript = document.getElementById('interim-transcript');
+        const waveformImage = document.getElementById('waveformImage');
+        const wordCountEl = document.getElementById('word-count');
+        const avgConfidenceEl = document.getElementById('avg-confidence');
+        const durationEl = document.getElementById('duration');
+        
+        // Audio context for capturing audio data
+        let audioContext;
+        let analyser;
+        let microphone;
+        let javascriptNode;
+        let audioData = [];
+        let startTime = null;
+        let isRecording = false;
+        let updateTimer = null;
+        
+        // Speech recognition settings
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        
+        // Speech recognition event handlers
+        recognition.onstart = function() {
+            statusEl.textContent = 'Listening...';
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            isRecording = true;
+            startTime = new Date();
+            
+            // Start timer for duration
+            updateTimer = setInterval(updateDuration, 1000);
+        };
+        
+        recognition.onend = function() {
+            if (isRecording) {
+                recognition.start();
+            }
+        };
+        
+        // Variables to track metrics
+        let totalConfidence = 0;
+        let confidenceCount = 0;
+        
+        recognition.onresult = function(event) {
+            let interim = '';
+            let final = '';
+            let wordCount = 0;
+            
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                if (event.results[i].isFinal) {
+                    final += event.results[i][0].transcript + ' ';
+                    totalConfidence += event.results[i][0].confidence;
+                    confidenceCount++;
+                } else {
+                    interim += event.results[i][0].transcript;
+                }
+            }
+            
+            finalTranscript.textContent = final + finalTranscript.textContent;
+            interimTranscript.textContent = interim;
+            
+            // Send audio data for visualization
+            sendDataForVisualization();
+            
+            // Update word count
+            wordCount = finalTranscript.textContent.split(/\s+/).filter(Boolean).length;
+            wordCountEl.textContent = wordCount;
+            
+            // Update average confidence
+            if (confidenceCount > 0) {
+                const avgConfidence = (totalConfidence / confidenceCount) * 100;
+                avgConfidenceEl.textContent = avgConfidence.toFixed(0) + '%';
+            }
+        };
+        
+        recognition.onerror = function(event) {
+            statusEl.textContent = 'Error: ' + event.error;
+            stopRecording();
+        };
+        
+        // Button event listeners
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        clearBtn.addEventListener('click', clearTranscript);
+        
+        function startRecording() {
+            try {
+                // Initialize audio context for waveform
+                setupAudioContext().then(() => {
+                    recognition.start();
+                }).catch(err => {
+                    console.error('Audio context setup failed:', err);
+                    statusEl.textContent = 'Microphone access failed. ' + err.message;
+                });
+            } catch (err) {
+                console.error('Recognition start failed:', err);
+                statusEl.textContent = 'Recognition failed to start. ' + err.message;
+            }
+        }
+        
+        function stopRecording() {
+            isRecording = false;
+            recognition.stop();
+            clearInterval(updateTimer);
+            stopBtn.disabled = true;
+            startBtn.disabled = false;
+            statusEl.textContent = 'Stopped.';
+            
+            // Clean up audio context
+            if (microphone) {
+                microphone.disconnect();
+            }
+            if (javascriptNode) {
+                javascriptNode.disconnect();
+            }
+        }
+        
+        function clearTranscript() {
+            finalTranscript.textContent = '';
+            interimTranscript.textContent = '';
+            wordCountEl.textContent = '0';
+            avgConfidenceEl.textContent = '0%';
+            durationEl.textContent = '0:00';
+            totalConfidence = 0;
+            confidenceCount = 0;
+            waveformImage.src = '/static/placeholder-waveform.png';
+        }
+        
+        async function setupAudioContext() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            
+            // Get microphone access
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            microphone = audioContext.createMediaStreamSource(stream);
+            
+            // Connect microphone to analyser
+            microphone.connect(analyser);
+            
+            // Set up analyser
+            analyser.fftSize = 2048;
+            const bufferLength = analyser.frequencyBinCount;
+            
+            // Create processor for getting audio data
+            javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+            analyser.connect(javascriptNode);
+            javascriptNode.connect(audioContext.destination);
+            
+            javascriptNode.onaudioprocess = function() {
+                const dataArray = new Uint8Array(bufferLength);
+                analyser.getByteTimeDomainData(dataArray);
+                
+                // Store audio data for visualization
+                audioData.push(Array.from(dataArray));
+                
+                // Limit stored audio data to prevent memory issues
+                if (audioData.length > 10) {
+                    audioData.shift();
+                }
+            };
+        }
+        
+        function sendDataForVisualization() {
+            if (!audioData.length) return;
+            
+            fetch('/visualize-waveform', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    audioData: audioData[audioData.length - 1],
+                    transcript: finalTranscript.textContent
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                waveformImage.src = data.waveformUrl;
+            })
+            .catch(err => {
+                console.error('Error sending audio data:', err);
+            });
+        }
+        
+        function updateDuration() {
+            if (!startTime) return;
+            
+            const now = new Date();
+            const diff = Math.floor((now - startTime) / 1000);
+            const minutes = Math.floor(diff / 60);
+            const seconds = diff % 60;
+            
+            durationEl.textContent = minutes + ':' + (seconds < 10 ? '0' + seconds : seconds);
+        }
+    </script>
+</body>
+</html>
